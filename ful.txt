@@ -1,0 +1,444 @@
+#main
+import sys
+from PyQt6 import QtWidgets
+from MyMainWindow import MyMainWindow
+
+app = QtWidgets.QApplication(sys.argv)
+dialog = MyMainWindow()
+dialog.show()
+sys.exit(app.exec())
+
+
+
+#MyMainWindow
+from PyQt6.QtWidgets import QMainWindow
+from HeatControlWidget import HeatControlWidget
+
+class MyMainWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("Heizungssteuerung")
+
+        self.setCentralWidget(HeatControlWidget(self))
+
+        self.setMinimumSize(1280, 720)
+
+
+
+#HeatControlWidget
+from PyQt6.QtWidgets import QWidget, QHBoxLayout
+from PyQt6.QtCore import QTimer, pyqtSlot, pyqtSignal
+from Controller import Controller
+from Heater import Heater
+from Gastherme import Gastherme
+from Notaus import Notaus
+
+class HeatControlWidget(QWidget):
+    slotReferenceValueKitchen = pyqtSlot(int)
+    slotRealValueKitchen = pyqtSlot()
+    signalRealValueKitchenChanged = pyqtSignal(int)
+
+    slotReferenceValueLiving = pyqtSlot(int)
+    slotRealValueLiving = pyqtSlot()
+    signalRealValueLivingChanged = pyqtSignal(int)
+
+    slotReferenceValueOffice = pyqtSlot(int)
+    slotRealValueOffice = pyqtSlot()
+    signalRealValueOfficeChanged = pyqtSignal(int)
+
+    slotRealValueAussen = pyqtSlot(int)
+    signalRealValueAussenChanged = pyqtSignal(int)
+
+    signalFrostSchutzIsActive = pyqtSignal(bool)
+
+    signalRuecklauf = pyqtSignal(int)
+
+    slotNotaus = pyqtSlot()
+
+    def __init__(self, parent=None):
+        super(HeatControlWidget, self).__init__(parent)
+        ###Klassen importieren###
+        self.heater = Heater(self)
+        self.controller = Controller(self)
+        self.gastherme = Gastherme(self)
+        self.notaus = Notaus(self)
+
+        ###Notaus###
+        self.notaus.signalNotaus.connect(self.slotNotaus)
+
+        ###Timer Kitchen###
+        self.timerKitchen = QTimer(self)
+        self.timerKitchen.timeout.connect(self.slotRealValueKitchen)
+        self.referenceValueKitchen = 0
+        self.realValueKitchen = 0
+        ###Timer Living###
+        self.timerLiving = QTimer(self)
+        self.timerLiving.timeout.connect(self.slotRealValueLiving)
+        self.referenceValueLiving = 0
+        self.realValueLiving = 0
+        ###Timer Office###
+        self.timerOffice = QTimer(self)
+        self.timerOffice.timeout.connect(self.slotRealValueOffice)
+        self.referenceValueOffice = 0
+        self.realValueOffice = 0
+        ###Signals&Slots Kitchen###
+        self.controller.changedTempKitchen.connect(self.slotReferenceValueKitchen)
+        self.signalRealValueKitchenChanged.connect(self.heater.textKitchen)
+        self.signalRealValueKitchenChanged.connect(self.vergleichen)
+        ###Signals&Slots Office###
+        self.controller.changedTempOffice.connect(self.slotReferenceValueOffice)
+        self.signalRealValueOfficeChanged.connect(self.heater.textOffice)
+        self.signalRealValueOfficeChanged.connect(self.vergleichen)
+        ###Signals&Slots Living###
+        self.controller.changedTempLiving.connect(self.slotReferenceValueLiving)
+        self.signalRealValueLivingChanged.connect(self.heater.textLiving)
+        self.signalRealValueLivingChanged.connect(self.vergleichen)
+        ###Signals&Slots Außentemperatur###
+        self.controller.changedTempAussen.connect(self.slotRealValueAussen)
+        self.signalRealValueAussenChanged.connect(self.heater.textAussen)
+        ###Signals&Slots Frostschutz###
+        self.signalFrostSchutzIsActive.connect(self.controller.Frostschutz)
+        ###Signals&Slots Rücklauf###
+        self.signalRuecklauf.connect(self.gastherme.changeRuecklauf)
+
+        ###Layout###
+        myLayout = QHBoxLayout(self)
+        myLayout.addWidget(self.controller)
+        myLayout.addWidget(self.heater)
+        myLayout.addWidget(self.gastherme)
+        myLayout.addWidget(self.notaus)
+        self.setLayout(myLayout)
+
+    #Notaus Funktion
+    def slotNotaus(self,wert):
+        self.controller.verticalSliderLiving.setEnabled(wert)
+        self.controller.verticalSliderOffice.setEnabled(wert)
+        self.controller.verticalSliderKitchen.setEnabled(wert)
+        self.controller.horizontalSliderAussen.setEnabled(wert)
+        self.gastherme.QDialVorlauf.setEnabled(wert)
+        self.gastherme.QDialRuecklauf.setEnabled(wert)
+        self.gastherme.QDialWarmwasser.setEnabled(wert)
+        self.gastherme.QDialFrostschutz.setEnabled(wert)
+
+    #Außentemperatur wird übergeben und Frostschutz auf True oder False gesetzt
+    def slotRealValueAussen(self, temp):
+        self.realValueAussen = temp
+        # Außentemperatur wird an realValueAussen übergeben
+        self.signalRealValueAussenChanged.emit(self.realValueAussen)
+        if self.realValueAussen < 5:
+            self.signalFrostSchutzIsActive.emit(True)
+        else:
+            self.signalFrostSchutzIsActive.emit(False)
+
+    #Starten des Timers falls nicht aktiv
+    def slotReferenceValueKitchen(self, referenceValue: int):
+        self.referenceValueKitchen = referenceValue
+
+        if self.timerKitchen.isActive() == False:
+            self.timerKitchen.start(1 * 1000)
+    #Abgleich ob Soll >/</= isttemperatur
+    def slotRealValueKitchen(self):
+        if self.referenceValueKitchen > self.realValueKitchen:
+            self.realValueKitchen += 1
+        elif self.referenceValueKitchen < self.realValueKitchen:
+            self.realValueKitchen -= 1
+        else:
+            self.timerKitchen.stop()
+
+        self.signalRealValueKitchenChanged.emit(self.realValueKitchen)
+
+    def slotReferenceValueLiving(self, referenceValue: int):
+        self.referenceValueLiving = referenceValue
+
+        if self.timerLiving.isActive() == False:
+            self.timerLiving.start(1 * 1000)
+
+    def slotRealValueLiving(self):
+        if self.referenceValueLiving > self.realValueLiving:
+            self.realValueLiving += 1
+        elif self.referenceValueLiving < self.realValueLiving:
+            self.realValueLiving -= 1
+        else:
+            self.timerLiving.stop()
+
+        self.signalRealValueLivingChanged.emit(self.realValueLiving)
+
+    def slotReferenceValueOffice(self, referenceValue: int):
+        self.referenceValueOffice = referenceValue
+
+        if self.timerOffice.isActive() == False:
+            self.timerOffice.start(1 * 1000)
+
+    def slotRealValueOffice(self):
+        if self.referenceValueOffice > self.realValueOffice:
+            self.realValueOffice += 1
+        elif self.referenceValueOffice < self.realValueOffice:
+            self.realValueOffice -= 1
+        else:
+            self.timerOffice.stop()
+
+        self.signalRealValueOfficeChanged.emit(self.realValueOffice)
+
+    #Vergleich welche Solltemp am größten ist
+    def vergleichen(self):
+        if self.referenceValueOffice > self.referenceValueLiving and self.referenceValueOffice > self.referenceValueKitchen:
+            self.max = self.referenceValueOffice
+            self.signalRuecklauf.emit(self.max+1)
+
+        elif self.referenceValueLiving > self.referenceValueKitchen and self.referenceValueLiving > self.referenceValueOffice:
+            self.max = self.referenceValueLiving
+            self.signalRuecklauf.emit(self.max+1)
+
+        else:
+            self.max = self.referenceValueKitchen
+            self.signalRuecklauf.emit(self.max+1)
+
+
+
+#Controller
+from PyQt6.QtWidgets import QWidget, QLCDNumber, QSlider
+from PyQt6.QtCore import pyqtSlot, pyqtSignal
+from PyQt6 import uic
+
+class Controller(QWidget):
+    valueOffice = pyqtSlot(int)
+    valueKitchen = pyqtSlot(int)
+    valueLiving = pyqtSlot(int)
+    valueAussen = pyqtSlot(int)
+
+    changedTempOffice = pyqtSignal(int)
+    changedTempKitchen = pyqtSignal(int)
+    changedTempLiving = pyqtSignal(int)
+    changedTempAussen = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super(Controller, self).__init__(parent)
+
+        uic.loadUi("controller.ui", self)
+
+        self.lcdNumberOffice = self.findChild(QLCDNumber, "lcdNumbeOffice")
+        self.lcdNumberLiving = self.findChild(QLCDNumber, "lcdNumberLiving")
+        self.lcdNumberKitchen = self.findChild(QLCDNumber, "lcdNumberKitchen")
+
+        self.verticalSliderOffice = self.findChild(QSlider, "verticalSliderOffice")
+        self.verticalSliderLiving = self.findChild(QSlider, "verticalSliderLiving")
+        self.verticalSliderKitchen = self.findChild(QSlider, "verticalSliderKitchen")
+        self.horizontalSliderAussen = self.findChild(QSlider, "horizontalSliderAussen")
+
+        self.verticalSliderOffice.valueChanged.connect(self.valueOffice)
+        self.verticalSliderKitchen.valueChanged.connect(self.valueKitchen)
+        self.verticalSliderLiving.valueChanged.connect(self.valueLiving)
+        self.horizontalSliderAussen.valueChanged.connect(self.valueAussen)
+        self.horizontalSliderAussen.setValue(20)
+
+    def valueOffice(self, soll):
+            self.changedTempOffice.emit(soll)
+
+    def valueLiving(self, soll):
+        self.changedTempLiving.emit(soll)
+
+    def valueKitchen(self, soll):
+        self.changedTempKitchen.emit(soll)
+
+    def valueAussen(self, soll):
+        self.changedTempAussen.emit(soll)
+
+    def Frostschutz(self, wert):
+        if wert == True:
+            self.verticalSliderOffice.setMinimum(5)
+            self.verticalSliderKitchen.setMinimum(5)
+            self.verticalSliderLiving.setMinimum(5)
+        elif wert == False:
+            self.verticalSliderOffice.setMinimum(0)
+            self.verticalSliderKitchen.setMinimum(0)
+            self.verticalSliderLiving.setMinimum(0)
+
+
+
+#Gastherme
+from PyQt6.QtWidgets import QWidget, QDial
+from PyQt6.QtCore import pyqtSlot, pyqtSignal
+from PyQt6 import uic
+#from HeatControlWidget import HeatControlWidget
+
+class Gastherme(QWidget):
+    valueVorlauf = pyqtSlot(int)
+    valueRuecklauf = pyqtSlot(int)
+    valueWarmwasser = pyqtSlot(int)
+    valueFrostschutz = pyqtSlot(int)
+    valueRuecklaufChanged = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super(Gastherme, self).__init__(parent)
+
+        uic.loadUi("Gastherme.ui", self)
+
+        self.__maxtemp = 0
+        self.QDialFrostschutz = self.findChild(QDial, "QDialFrostschutz")
+        self.QDialRuecklauf = self.findChild(QDial, "QDialRuecklauf")
+        self.QDialVorlauf = self.findChild(QDial, "QDialVorlauf")
+        self.QDialWarmwasser = self.findChild(QDial, "QDialWarmwasser")
+
+        #self.__QDialVorlauf.valueChanged.connect(self.valueVorlauf)
+        self.QDialRuecklauf.valueChanged.connect(self.valueRuecklauf)
+        #self.__QDialWarmwasser.valueChanged.connect(self.valueWarmwasser)
+        #self.__QDialFrostschutz.valueChanged.connect(self.valueFrostschutz)
+        self.QDialWarmwasser.setValue(50)
+        self.valueRuecklaufChanged.connect(self.valueVorlauf)
+        self.QDialRuecklauf.setDisabled(True)
+        self.QDialVorlauf.setDisabled(True)
+        #self.valueRuecklaufChanged.connect(self.changeRuecklauf)
+
+    def valueVorlauf(self, wert):
+        self.__maxtemp = wert + 10
+        self.QDialVorlauf.setValue(self.__maxtemp)
+        #self.__QDialVorlauf.setMinimum(self.__maxtemp)
+
+    def valueRuecklauf(self, wert):
+        self.valueRuecklaufChanged.emit(wert)
+        self.__maxtemp = wert
+
+    def changeRuecklauf(self,wert):
+        self.QDialRuecklauf.setValue(wert)
+
+
+
+#Heater
+from PyQt6.QtWidgets import QWidget, QTextBrowser
+from PyQt6.QtCore import pyqtSlot
+from PyQt6 import uic
+
+class Heater(QWidget):
+    textOffice = pyqtSlot(int)
+    textLiving = pyqtSlot(int)
+    textKitchen = pyqtSlot(int)
+    textAussen = pyqtSlot(int)
+
+    def __init__(self, parent=None):
+        super(Heater, self).__init__(parent)
+
+        uic.loadUi("heater.ui", self)
+
+        self.textBrowserOffice = self.findChild(QTextBrowser, "textBrowserOffice")
+        self.textBrowserLiving = self.findChild(QTextBrowser, "textBrowserLiving")
+        self.textBrowserKitchen = self.findChild(QTextBrowser, "textBrowserKitchen")
+        self.textBrowserAussen = self.findChild(QTextBrowser, "textBrowserAussen")
+
+    def textOffice(self, ist):
+        text = str(ist) + " °C"
+        self.textBrowserOffice.setText(text)
+
+    def textLiving(self, ist):
+        text = str(ist) + " °C"
+        self.textBrowserLiving.setText(text)
+
+    def textKitchen(self, ist):
+        text = str(ist) + " °C"
+        self.textBrowserKitchen.setText(text)
+
+    def textAussen(self, ist):
+        text = str(ist) + " °C"
+        self.textBrowserAussen.setText(text)
+
+
+
+#Counter
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QAbstractButton
+from PyQt6.QtCore import QTimer, pyqtSlot, pyqtSignal
+from PyQt6 import uic
+
+class Notaus(QWidget):
+
+    slotNotaus = pyqtSlot(bool)
+    signalNotaus = pyqtSignal(bool)
+    SlotNotan = pyqtSlot()
+
+    def __init__(self, parent=None):
+        super(Notaus, self).__init__(parent)
+
+        uic.loadUi("Notaus.ui", self)
+
+        self.notausbutton = self.findChild(QPushButton, "Notaus")
+        self.notausbutton.setAutoRepeat(True)
+        self.notausbutton.clicked.connect(self.slotNotaus)
+        self.notaustimer = QTimer(self)
+        self.notaustimer2 = QTimer(self)
+        self.first = False
+        self.second = False
+        self.notaustimer.timeout.connect(self.counterzähler)
+        self.counter = 0
+
+    def slotNotaus(self,wert):
+
+        if self.notausbutton.isDown():
+            if self.notaustimer.isActive() == False:
+                self.notaustimer.start(1000)
+
+        else:
+            self.notaustimer.stop()
+            self.counter = 0
+
+    def counterzähler(self):
+        self.counter += 1
+        if self.counter == 5:
+            print("Ziel")
+
+
+
+#Notaus
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QAbstractButton
+from PyQt6.QtCore import QTimer, pyqtSlot, pyqtSignal
+from PyQt6 import uic
+
+class Notaus(QWidget):
+
+    slotNotaus = pyqtSlot(bool)
+    signalNotaus = pyqtSignal(bool)
+    SlotNotan = pyqtSlot()
+
+    def __init__(self, parent=None):
+        super(Notaus, self).__init__(parent)
+
+        uic.loadUi("Notaus.ui", self)
+
+        self.notausbutton = self.findChild(QPushButton, "Notaus")
+        self.notausbutton.setAutoRepeat(True)
+        self.notausbutton.clicked.connect(self.slotNotaus)
+        self.notaustimer = QTimer(self)
+        self.notaustimer2 = QTimer(self)
+        self.first = False
+        self.second = False
+        self.notaustimer2.timeout.connect(self.notausan)
+
+    def slotNotaus(self,wert):
+
+        if self.first == False:
+            self.notaustimer.start(5 * 1000)
+            self.first = True
+        else:
+            self.first = True
+        self.signalNotaus.emit(wert)
+
+        if self.notausbutton.isDown():
+            print(self.notaustimer.remainingTime())
+            self.notaustimer.timeout.connect(self.SlotNotan)
+
+        if self.notausbutton.isDown() == False:
+            self.notaustimer.stop()
+            self.first = False
+
+    def SlotNotan(self):
+        print("Notan")
+        self.notaustimer.stop()
+        self.signalNotaus.emit(True)
+        self.notausbutton.setDisabled(True)
+        if self.second == False:
+            self.notaustimer2.start(1000)
+            self.second = True
+
+    def notausan(self):
+        print("Notausfunk")
+        self.notausbutton.setEnabled(True)
+        self.notaustimer2.stop()
+        self.second = False
